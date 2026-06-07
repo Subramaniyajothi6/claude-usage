@@ -1,7 +1,7 @@
 {
-  "name": "claude-usage",
-  "displayName": "Claude Usage",
-  "description": "Live Claude Code usage limits (session + weekly) rendered in a terminal you can split beside the Claude terminal.",
+  "name": "claude-gauge",
+  "displayName": "ClaudeGauge",
+  "description": "Your Claude Code quota at a glance — session + weekly usage in the status bar, with reset times, trends, and alerts.",
   "version": "0.5.0",
   "publisher": "subramaniyajothi",
   "license": "MIT",

@@ -3,7 +3,7 @@ const vscode = require("vscode");
 
 function findExtension() {
   return vscode.extensions.all.find(
-    (e) => e.packageJSON && e.packageJSON.name === "claude-usage"
+    (e) => e.packageJSON && e.packageJSON.name === "claude-gauge"
   );
 }
 

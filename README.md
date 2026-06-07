@@ -1,6 +1,6 @@
-# Claude Usage (VS Code)
+# ClaudeGauge
 
-A tiny **status bar** readout of your Claude Code usage limits — current
+Your Claude Code quota at a glance. A tiny **status bar** readout of your usage limits — current
 **5-hour session** and **weekly** quota — always visible at the bottom of VS
 Code. Mirrors the numbers from Claude Code's `/usage` view.
 
