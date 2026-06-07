@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+.vscode-test.mjs
+.github/**
+test/**
+media/icons/**
+eslint.config.js
+.gitignore
+.eslintcache
+**/*.map
+node_modules/**
+*.vsix

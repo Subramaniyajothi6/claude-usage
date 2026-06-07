@@ -1,0 +1,8 @@
+node_modules/
+*.vsix
+.vscode-test/
+.eslintcache
+*.log
+
+# CI workflow excluded until gh has the workflow scope
+.github/

@@ -1,0 +1,113 @@
+{
+  "name": "claude-usage",
+  "displayName": "Claude Usage",
+  "description": "Live Claude Code usage limits (session + weekly) rendered in a terminal you can split beside the Claude terminal.",
+  "version": "0.5.0",
+  "publisher": "subramaniyajothi",
+  "license": "MIT",
+  "icon": "media/icon-128.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Subramaniyajothi6/claude-usage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Subramaniyajothi6/claude-usage/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "usage",
+    "rate limit",
+    "anthropic",
+    "status bar"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.0.0",
+    "mocha": "^10.4.0"
+  },
+  "scripts": {
+    "test": "node --test test/lib.test.js test/api.test.js",
+    "test:integration": "vscode-test",
+    "lint": "eslint .",
+    "pretest": "npm run lint"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeUsage.refresh",
+        "title": "Claude Usage: Refresh Now"
+      },
+      {
+        "command": "claudeUsage.openBeside",
+        "title": "Claude Usage: Open Detailed View Beside Terminal"
+      },
+      {
+        "command": "claudeUsage.open",
+        "title": "Claude Usage: Open Detailed View in New Terminal"
+      }
+    ],
+    "icons": {
+      "claude-logo": {
+        "description": "Claude logo",
+        "default": {
+          "fontPath": "media/claude.woff",
+          "fontCharacter": "\\E001"
+        }
+      }
+    },
+    "terminal": {
+      "profiles": [
+        {
+          "id": "claudeUsage.profile",
+          "title": "Claude Usage",
+          "icon": "graph"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Usage",
+      "properties": {
+        "claudeUsage.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 60,
+          "description": "How often to poll the Anthropic usage endpoint, in seconds. The endpoint is strictly rate-limited, so keep this high (default 10 min)."
+        },
+        "claudeUsage.credentialsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional override path to .credentials.json. Defaults to ~/.claude/.credentials.json."
+        },
+        "claudeUsage.autoRefreshToken": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, the extension renews an expired Claude access token itself and writes the rotated tokens back to .credentials.json (the same file Claude Code uses). Leave OFF to never modify your login file — if the token expires, the extension simply shows 'sign in' until Claude Code refreshes it."
+        },
+        "claudeUsage.notifyAt": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            80,
+            90
+          ],
+          "description": "Show a warning notification when session or weekly usage crosses these percentages. Set to [] to disable notifications."
+        }
+      }
+    }
+  }
+}
