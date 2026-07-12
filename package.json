@@ -1,8 +1,8 @@
 {
   "name": "claude-gauge",
   "displayName": "ClaudeGauge",
-  "description": "Your Claude Code quota at a glance — session + weekly usage in the status bar, with reset times, trends, and alerts.",
-  "version": "0.5.0",
+  "description": "Claude Code quota + live context window in the status bar — session/weekly usage, per-chat context %, multi-chat tracking, resume closed chats, daily token stats.",
+  "version": "0.7.0",
   "publisher": "subramaniyajothi",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -19,7 +19,13 @@
     "usage",
     "rate limit",
     "anthropic",
-    "status bar"
+    "status bar",
+    "context window",
+    "tokens",
+    "quota",
+    "session resume",
+    "compact",
+    "monitor"
   ],
   "engines": {
     "vscode": "^1.90.0"
@@ -36,7 +42,7 @@
     "mocha": "^10.4.0"
   },
   "scripts": {
-    "test": "node --test test/lib.test.js test/api.test.js",
+    "test": "node --test test/lib.test.js test/api.test.js test/context.test.js",
     "test:integration": "vscode-test",
     "lint": "eslint .",
     "pretest": "npm run lint"
@@ -49,6 +55,14 @@
       {
         "command": "claudeUsage.refresh",
         "title": "Claude Usage: Refresh Now"
+      },
+      {
+        "command": "claudeUsage.pickSession",
+        "title": "Claude Usage: Pick Chat to Track"
+      },
+      {
+        "command": "claudeUsage.resumeChat",
+        "title": "Claude Usage: Resume Recent Chat"
       },
       {
         "command": "claudeUsage.openBeside",
@@ -95,6 +109,31 @@
           "type": "boolean",
           "default": false,
           "description": "When enabled, the extension renews an expired Claude access token itself and writes the rotated tokens back to .credentials.json (the same file Claude Code uses). Leave OFF to never modify your login file — if the token expires, the extension simply shows 'sign in' until Claude Code refreshes it."
+        },
+        "claudeUsage.showDailyStats": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show today's total tokens and estimated API-price value in the tooltip (computed locally from transcripts)."
+        },
+        "claudeUsage.showContextWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the active Claude Code chat's context-window usage (read locally from ~/.claude/projects transcripts — no extra API calls)."
+        },
+        "claudeUsage.contextWindowTokens": {
+          "type": "number",
+          "default": 0,
+          "description": "Context window size in tokens used to compute the percentage. 0 = auto by model family (200k / 500k / 1M). Set explicitly (e.g. 500000) if your plan's window differs — check with /context in Claude Code."
+        },
+        "claudeUsage.contextNotifyAt": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            80
+          ],
+          "description": "Warn when the active chat's context crosses these percentages (so you can /compact in time). Set to [] to disable."
         },
         "claudeUsage.notifyAt": {
           "type": "array",

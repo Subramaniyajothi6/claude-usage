@@ -19,6 +19,7 @@ const {
 } = require("./lib");
 
 const api = require("./api");
+const ctx = require("./context");
 
 // ---- credentials + fetch -------------------------------------------------
 
@@ -175,6 +176,50 @@ function configInterval() {
   return Math.max(60, secs) * 1000;
 }
 
+// ---- context window (local transcript read, no network) -------------------
+
+const CTX_POLL_MS = 15000; // cheap local file read
+const CTX_STALE_MS = 30 * 60 * 1000; // hide from status bar after 30 min idle
+
+function ctxConfig() {
+  const cfg = vscode.workspace.getConfiguration("claudeUsage");
+  return {
+    show: cfg.get("showContextWindow", true),
+    windowOverride: cfg.get("contextWindowTokens", 0),
+    notifyAt: cfg.get("contextNotifyAt", [80]),
+  };
+}
+
+// Every recently-active chat across all workspace folders, newest first.
+function readWorkspaceSessions(activeMs = CTX_STALE_MS) {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || !folders.length) return [];
+  const { windowOverride } = ctxConfig();
+  let all = [];
+  for (const f of folders) {
+    try {
+      all = all.concat(
+        ctx.activeSessions(f.uri.fsPath, { windowOverride, activeMs })
+      );
+    } catch {
+      /* folder without transcripts */
+    }
+  }
+  return all.sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+// Reopen a chat in a fresh terminal via `claude --resume <session-id>`.
+function resumeInTerminal(session) {
+  const folders = vscode.workspace.workspaceFolders;
+  const cwd = session.cwd || (folders && folders.length ? folders[0].uri.fsPath : undefined);
+  const term = vscode.window.createTerminal({
+    name: session.label ? session.label.slice(0, 24) : "Claude",
+    cwd,
+  });
+  term.show();
+  term.sendText(`claude --resume ${session.sessionId}`, true);
+}
+
 // ---- pseudoterminal (detailed bars view) ---------------------------------
 
 class UsageTerminal {
@@ -305,6 +350,14 @@ class StatusController {
     const age = Date.now() - (c ? c.fetchedAt : 0);
     if (!c || age > configInterval()) this.poll();
     else this.schedule(configInterval() - age);
+
+    // Context window: local file read, so it can poll much faster than the API.
+    this.ctxFired = 0;
+    this.ctxSession = null;
+    this.sessions = [];
+    this.pinnedId = null; // null = auto-track the newest chat
+    this.pollContext();
+    this.ctxTimer = setInterval(() => this.pollContext(), CTX_POLL_MS);
   }
 
   schedule(ms) {
@@ -315,7 +368,108 @@ class StatusController {
 
   stop() {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    if (this.ctxTimer) clearInterval(this.ctxTimer);
+    this.timer = this.ctxTimer = undefined;
+  }
+
+  pollContext() {
+    // Daily stats piggyback on this timer; the per-file cache in context.js
+    // means only transcripts that changed since last tick get re-parsed.
+    if (
+      vscode.workspace.getConfiguration("claudeUsage").get("showDailyStats", true)
+    ) {
+      try {
+        this.today = ctx.todayStats();
+      } catch {
+        this.today = null;
+      }
+    } else {
+      this.today = null;
+    }
+    const { show, notifyAt } = ctxConfig();
+    const prev = this.ctx;
+    this.sessions = show ? readWorkspaceSessions() : [];
+    // Track the pinned chat while it's still active, otherwise the newest.
+    this.ctx =
+      (this.pinnedId && this.sessions.find((s) => s.sessionId === this.pinnedId)) ||
+      this.sessions[0] ||
+      null;
+    if (!this.ctx) {
+      if (prev) this.render();
+      return;
+    }
+    // New chat or a /compact (big token drop) re-arms the notification.
+    if (
+      this.ctx.sessionId !== this.ctxSession ||
+      (prev && this.ctx.sessionId === prev.sessionId && this.ctx.tokens < prev.tokens * 0.7)
+    ) {
+      this.ctxSession = this.ctx.sessionId;
+      this.ctxFired = 0;
+    }
+    if (Array.isArray(notifyAt) && notifyAt.length) {
+      const hit = newlyCrossed(this.ctx.pct, notifyAt, this.ctxFired);
+      if (hit !== null) {
+        this.ctxFired = hit;
+        const who = this.ctx.label ? ` ("${this.ctx.label}")` : "";
+        vscode.window.showWarningMessage(
+          `Claude chat${who} context at ${this.ctx.pct}% of its window — consider /compact before it auto-compacts.`
+        );
+      }
+    }
+    if (
+      !prev ||
+      prev.sessionId !== this.ctx.sessionId ||
+      prev.tokens !== this.ctx.tokens ||
+      (this.sessions.length > 1) !== this.hadMulti
+    ) {
+      this.hadMulti = this.sessions.length > 1;
+      this.render();
+    }
+  }
+
+  // QuickPick to pin which chat the status bar tracks.
+  async pickSession() {
+    const items = [
+      {
+        label: "$(sync) Auto — newest chat",
+        description: this.pinnedId ? "" : "current",
+        id: null,
+      },
+      ...this.sessions.map((s) => ({
+        label: `$(comment-discussion) ${s.label || s.sessionId.slice(0, 8)}`,
+        description: `${s.pct}% · ${ctx.fmtTokens(s.tokens)} tokens · ${ctx.agoLabel(s.lastActivity)}`,
+        detail: s.sessionId === (this.ctx && this.ctx.sessionId) ? "currently shown" : undefined,
+        id: s.sessionId,
+      })),
+    ];
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: "Which Claude Code chat should the status bar track?",
+    });
+    if (!pick) return;
+    this.pinnedId = pick.id;
+    this.pollContext();
+    this.render();
+  }
+
+  // QuickPick over the last 24h of chats — reopen one whose terminal was
+  // closed (or open a second view on a running one) via `claude --resume`.
+  async resumeChat() {
+    const sessions = readWorkspaceSessions(24 * 60 * 60 * 1000);
+    if (!sessions.length) {
+      vscode.window.showInformationMessage(
+        "No Claude Code chats found for this workspace in the last 24 hours."
+      );
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(
+      sessions.map((s) => ({
+        label: `$(comment-discussion) ${s.label || s.sessionId.slice(0, 8)}`,
+        description: `${s.pct}% · ${ctx.fmtTokens(s.tokens)} tokens · ${ctx.agoLabel(s.lastActivity)}`,
+        session: s,
+      })),
+      { placeHolder: "Reopen which chat? (runs `claude --resume` in a new terminal)" }
+    );
+    if (pick) resumeInTerminal(pick.session);
   }
 
   // Manual refresh (status bar click) — always gives the user feedback.
@@ -431,7 +585,18 @@ class StatusController {
     if (!this.last) return;
     const s = statusText(this.last);
 
-    this.item.text = `$(claude-logo) ${s.text}`;
+    // Live chat context; "+N" flags other concurrently active chats.
+    // Shows "CTX —" (instead of hiding) when no chat was active recently,
+    // so the segment doesn't mysteriously appear and disappear.
+    const c = this.ctx;
+    const others = Math.max(0, (this.sessions || []).length - 1);
+    const ctxSeg = !ctxConfig().show
+      ? ""
+      : c
+      ? ` | CTX ${c.pct}%${others ? ` +${others}` : ""}`
+      : " | CTX —";
+
+    this.item.text = `$(claude-logo) ${s.text}${ctxSeg}`;
     this.item.backgroundColor =
       s.worst >= 90
         ? new vscode.ThemeColor("statusBarItem.errorBackground")
@@ -463,6 +628,47 @@ class StatusController {
     modelRow("Opus", this.last.seven_day_opus);
     modelRow("Sonnet", this.last.seven_day_sonnet);
 
+    if (this.sessions && this.sessions.length) {
+      const multi = this.sessions.length > 1;
+      md.appendMarkdown(multi ? `**Active chats (${this.sessions.length})**\n\n` : "");
+      for (const sess of this.sessions) {
+        const tracked = c && sess.sessionId === c.sessionId;
+        const name = sess.label || sess.sessionId.slice(0, 8);
+        const marker = multi ? (tracked ? "$(pin) " : "$(comment) ") : "";
+        const resumeUri = `command:claudeUsage.resumeSession?${encodeURIComponent(
+          JSON.stringify([sess])
+        )}`;
+        md.appendMarkdown(
+          `${marker}${multi ? name + " — " : "Chat context — "}**${sess.pct}%** ` +
+            `(${ctx.fmtTokens(sess.tokens)} / ${ctx.fmtTokens(sess.windowSize)} tokens) ` +
+            `[$(terminal)](${resumeUri} "Reopen this chat in a new terminal (claude --resume)")\n\n`
+        );
+        md.appendMarkdown(
+          "`" +
+            tooltipBar(sess.pct) +
+            "`  " +
+            (sess.model ? sess.model + " · " : "") +
+            ctx.agoLabel(sess.lastActivity) +
+            "\n\n"
+        );
+      }
+      if (multi) {
+        md.appendMarkdown(
+          `_[Pick which chat to track](command:claudeUsage.pickSession)_ · `
+        );
+      }
+      md.appendMarkdown(
+        `_[$(history) Resume a recent chat](command:claudeUsage.resumeChat)_\n\n`
+      );
+      md.isTrusted = true;
+    } else if (ctxConfig().show) {
+      md.appendMarkdown(
+        `Chat context — no chat active in the last 30 min\n\n` +
+          `_[$(history) Resume a recent chat](command:claudeUsage.resumeChat)_\n\n`
+      );
+      md.isTrusted = true;
+    }
+
     const xu = this.last.extra_usage;
     if (xu && xu.is_enabled) {
       const cur = xu.currency || "$";
@@ -472,6 +678,21 @@ class StatusController {
         );
       } else if (xu.utilization != null) {
         md.appendMarkdown(`Pay-as-you-go — **${Math.round(xu.utilization)}%**\n\n`);
+      }
+    }
+    if (this.today) {
+      md.appendMarkdown(
+        `Today — **${ctx.fmtTokens(this.today.tokens)}** tokens · ` +
+          `~$${this.today.cost.toFixed(2)} API value\n\n`
+      );
+      const byUse = Object.entries(this.today.models).sort(
+        (a, b) => b[1].in + b[1].out + b[1].cr + b[1].cw - (a[1].in + a[1].out + a[1].cr + a[1].cw)
+      );
+      for (const [model, m] of byUse.slice(0, 3)) {
+        md.appendMarkdown(
+          `&nbsp;&nbsp;${model}: ${ctx.fmtTokens(m.out)} out · ` +
+            `${ctx.fmtTokens(m.in + m.cr + m.cw)} in\n\n`
+        );
       }
     }
     if (this.history && this.history.length >= 2) {
@@ -510,6 +731,11 @@ function activate(context) {
   const status = new StatusController(context);
   context.subscriptions.push(
     vscode.commands.registerCommand("claudeUsage.refresh", () => status.refresh()),
+    vscode.commands.registerCommand("claudeUsage.pickSession", () => status.pickSession()),
+    vscode.commands.registerCommand("claudeUsage.resumeChat", () => status.resumeChat()),
+    vscode.commands.registerCommand("claudeUsage.resumeSession", (session) =>
+      resumeInTerminal(session)
+    ),
     vscode.commands.registerCommand("claudeUsage.openBeside", () => makeTerminal(true)),
     vscode.commands.registerCommand("claudeUsage.open", () => makeTerminal(false)),
     vscode.window.registerTerminalProfileProvider("claudeUsage.profile", {

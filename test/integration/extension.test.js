@@ -21,6 +21,9 @@ suite("Claude Usage integration", () => {
     const cmds = await vscode.commands.getCommands(true);
     for (const id of [
       "claudeUsage.refresh",
+      "claudeUsage.pickSession",
+      "claudeUsage.resumeChat",
+      "claudeUsage.resumeSession",
       "claudeUsage.openBeside",
       "claudeUsage.open",
     ]) {
